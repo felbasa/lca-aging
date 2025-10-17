@@ -1,0 +1,52 @@
+---
+title: "Final Project"
+author: "Félix Báez-Santiago, Valeria Castañeda-Saucedo, Xinyu Lin and Angelina Lu"
+date: "2025-09-19"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, warning=FALSE, include=FALSE}
+library(haven)
+library(dplyr)
+library(sjlabelled)
+library(sjPlot)
+library(expss)
+library(googledrive)
+library(readr)
+
+# Authenticate with google account once
+drive_auth()
+```
+
+# Read in the cogimp0 dataset
+```{r}
+# Access and read the cogimp0 file from the drive
+cogimp0 = drive_download(
+  as_id("1xDBY_8-djIWfKWTBKrxlYbZ9mkw6zlJ2"),
+  path = tempfile(fileext = ".sav"),
+  overwrite = TRUE
+) %>%
+  { read_sav(.$local_path) }  
+
+# generate codebook dataframe
+cogimp0_codebook = labelled::generate_dictionary(cogimp0)
+```
+
+# read in the 2022 tracker file dataset
+```{r}
+# read in the trk2022v2 file
+trk2022v2 = drive_download(
+  as_id("1G0wZriMuTMftZYP834aJG7nMrN3k4T5E"),
+  path = tempfile(fileext = ".sav"),
+  overwrite = TRUE
+) %>%
+  { read_sav(.$local_path) }  
+
+# generate codebook
+trk2022v2_codebook = labelled::generate_dictionary(trk2022v2)
+```
+
