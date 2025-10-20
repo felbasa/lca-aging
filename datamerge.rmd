@@ -50,3 +50,22 @@ trk2022v2 = drive_download(
 trk2022v2_codebook = labelled::generate_dictionary(trk2022v2)
 ```
 
+# Merge attempt
+```{r}
+hh_match <- cogimp0 %>%
+  select(HHID) %>%
+  mutate(source = "cogimp0") %>%
+  inner_join(trk2022v2 %>% select(hhid) %>% mutate(source = "trk2022v2"),
+             by = c("HHID" = "hhid"))
+
+nrow(hh_match)  # number of matching households
+
+
+# Compare person IDs
+pn_match <- cogimp0 %>%
+  select(PN) %>%
+  inner_join(trk2022v2 %>% select(pn), by = c("PN" = "pn"))
+
+nrow(pn_match)  # number of matching persons
+```
+
