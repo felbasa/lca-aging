@@ -1,0 +1,198 @@
+---
+title: "Final Project"
+author: "Félix Báez-Santiago, Valeria Castañeda-Saucedo, Xinyu Lin and Angelina Lu"
+date: "2025-09-19"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, warning=FALSE, include=FALSE}
+library(haven)
+library(dplyr)
+library(sjlabelled)
+library(sjPlot)
+library(expss)
+library(googledrive)
+library(readr)
+library(stringr)
+library(tidyr)
+library(poLCA)
+
+# Authenticate with google account once
+drive_auth()
+```
+
+# Read in the cogimp0 dataset
+
+```{r}
+# Access and read the cogimp0 file from the drive
+cogimp0 = drive_download(
+  as_id("1xDBY_8-djIWfKWTBKrxlYbZ9mkw6zlJ2"),
+  path = tempfile(fileext = ".sav"),
+  overwrite = TRUE
+) %>%
+  { read_sav(.$local_path) }  
+
+# generate codebook dataframe
+cogimp0_codebook = labelled::generate_dictionary(cogimp0)
+```
+
+# Read in the 2022 tracker file dataset
+
+```{r}
+# read in the trk2022v2 file
+trk2022v2 = drive_download(
+  as_id("1G0wZriMuTMftZYP834aJG7nMrN3k4T5E"),
+  path = tempfile(fileext = ".sav"),
+  overwrite = TRUE
+) %>%
+  { read_sav(.$local_path) }  
+
+# generate codebook
+trk2022v2_codebook = labelled::generate_dictionary(trk2022v2)
+```
+
+# Combine the data and variables we need
+
+```{r}
+cogimp0   <- cogimp0 %>% mutate(hhid = as.character(HHID), pn = as.character(PN))
+trk2022v2 <- trk2022v2 %>% mutate(hhid = as.character(hhid), pn = as.character(pn))
+```
+
+```{r}
+data_w13 <- cogimp0 %>%
+  dplyr::select(hhid, pn,R13MO, R13DY, R13YR, R13DW, R13SCIS, R13CACT, R13PRES, R13VP) %>%rename(
+    Month= R13MO,
+    Day= R13DY,
+    Year= R13YR,
+    DOW= R13DW,
+    Scissors= R13SCIS,
+    Cactus= R13CACT,
+    President= R13PRES,
+    VP = R13VP
+  ) %>%
+  mutate(wave = "W13")
+```
+
+```{r}
+data_w3 <- cogimp0 %>%
+  dplyr::select(hhid, pn,R3MO, R3DY, R3YR, R3DW, R3SCIS, R3CACT, R3PRES, R3VP) %>%
+  rename(
+    Month= R3MO,
+    Day= R3DY,
+    Year= R3YR,
+    DOW = R3DW,
+    Scissors = R3SCIS,
+    Cactus = R3CACT,
+    President = R3PRES,
+    VP = R3VP
+  ) %>%
+  mutate(wave = "W3")
+
+```
+
+```{r}
+# data_long <- bind_rows(data_w3, data_w13)
+```
+
+```{r}
+cov_w13 <- trk2022v2 %>%
+  dplyr::select(hhid, pn, page, gender, degree, race) %>%
+  rename(age = page) %>%
+  mutate(wave = "W13")
+
+cov_w3 <- trk2022v2 %>%
+  dplyr::select(hhid, pn, eage, gender, degree, race) %>%
+  rename(age = eage) %>%
+  mutate(wave = "W3")
+
+# covs_long <- bind_rows(cov_w3, cov_w13)
+```
+
+```{r}
+#lca_raw <- data_long %>%
+#  inner_join(covs_long, by = c("hhid", "pn", "wave"))
+
+#indicator_names <- c("Month","Day","Year","DOW","Scissors","Cactus","President","VP")
+```
+
+```{r}
+lca_w3 <- data_w3 %>%
+  inner_join(cov_w3, by = c("hhid", "pn", "wave"))
+
+indicator_names <- c("Month","Day","Year","DOW","Scissors","Cactus","President","VP")
+```
+
+```{r}
+#lca_ready <- lca_raw %>%
+#  dplyr::mutate(across(all_of(indicator_names),
+#                       ~ ifelse(is.na(.), NA, as.integer(. + 1))))
+```
+
+```{r}
+lca_ready_w3 <- lca_w3 %>%
+  dplyr::mutate(across(all_of(indicator_names),
+                       ~ ifelse(is.na(.), NA, as.integer(. + 1))))
+```
+
+```{r}
+summary(lca_w3[ , indicator_names])
+summary(lca_w3$age)
+table(lca_w3$gender, useNA = "ifany")
+table(lca_w3$degree, useNA = "ifany")
+table(lca_w3$race,   useNA = "ifany")
+table(lca_w3$wave)
+```
+
+# Fit LCA model
+
+**Without covariates**
+
+```{r}
+set.seed(687)
+f_ind <- cbind(Month, Day, Year, DOW, Scissors, Cactus, President, VP) ~ 1
+sub_df <- lca_ready_w3 %>% dplyr::sample_frac(0.5)
+fit_list <- lapply(2:5, function(k) {
+  poLCA(f_ind, data = sub_df, nclass = k, maxiter = 1500, nrep = 3, verbose = FALSE)
+})
+
+data.frame(
+  k   = 2:5,
+  AIC = sapply(fit_list, \(m) m$aic),
+  BIC = sapply(fit_list, \(m) m$bic),
+  Gsq = sapply(fit_list, \(m) m$Gsq)
+)
+
+```
+
+We will use 4 classes with BIC the lowest for w3.
+
+```{r}
+set.seed(687)
+lca_k4_w3 <- poLCA(f_ind, data = lca_ready_w3, nclass = 4, maxiter = 5000, nrep = 20, verbose = TRUE)
+lca_k4_w3$probs
+```
+
+```{r}
+lca_ready_w3$.rowid <- seq_len(nrow(lca_ready_w3))
+mf <- model.frame(f_ind, data = lca_ready_w3, na.action = na.omit)
+idx <- as.integer(row.names(mf)) 
+tab_w3 <- table(lca_k4_w3$predclass, lca_ready_w3$wave[idx])
+tab_w3
+```
+
+**With covariates**
+
+```{r}
+set.seed(687)
+f_cov <- cbind(Month, Day, Year, DOW, Scissors, Cactus, President, VP) ~ 
+  age + factor(gender) + factor(degree) + factor(race) 
+
+lca_cov_w3 <- poLCA(f_cov, data = lca_ready_w3, nclass = 4, maxiter = 5000, nrep = 20, verbose = TRUE)
+
+lca_cov_w3$P     
+lca_cov_w3$coeff 
+```
