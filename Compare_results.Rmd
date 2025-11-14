@@ -1,0 +1,171 @@
+---
+title: "Comparison for W3 and 13"
+author: "Félix Báez-Santiago, Valeria Castañeda-Saucedo, Xinyu Lin and Angelina Lu"
+date: "2025-11-13"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(stringr)
+library(ggplot2)
+library(clue)
+```
+
+```{r}
+m_w3_nocov  <- readRDS("lca_w3_k4_nocov.rds")
+m_w13_nocov <- readRDS("lca_w13_k4_nocov_update.rds")
+m_w3_cov    <- readRDS("lca_w3_k4_cov.rds")
+m_w13_cov   <- readRDS("lca_w13_k4_cov_update.rds")
+```
+
+```{r}
+# Fit comparison (AIC/BIC/G^2, N, K)
+fit_row <- function(m, wave, cov){
+  tibble(
+    wave     = wave,
+    covars   = cov,
+    k        = ncol(m$P),  
+    N        = m$N,
+    AIC      = m$aic,
+    BIC      = m$bic,
+    G2       = m$Gsq
+  )
+}
+fit_cmp <- bind_rows(
+  fit_row(m_w3_nocov,  "W3",  "no"),
+  fit_row(m_w13_nocov, "W13", "no"),
+  fit_row(m_w3_cov,    "W3",  "yes"),
+  fit_row(m_w13_cov,   "W13", "yes")
+)
+fit_cmp
+```
+
+```{r}
+# Class size comparison (estimated mixing proportions)
+mix_row <- function(m, wave, cov){
+  tibble(wave = wave, covars = cov, class = seq_along(m$P), proportion = as.numeric(m$P))
+}
+mix_cmp <- bind_rows(
+  mix_row(m_w3_nocov,  "W3",  "no"),
+  mix_row(m_w13_nocov, "W13", "no"),
+  mix_row(m_w3_cov,    "W3",  "yes"),
+  mix_row(m_w13_cov,   "W13", "yes")
+)
+mix_cmp
+
+```
+
+```{r}
+# Quick entropy / classification sharpness
+entropy <- function(p) -sum(p * log(p + 1e-12))
+norm_entropy <- function(post) {
+  # average normalized entropy across cases (0 = sharp, 1 = diffuse)
+  K <- ncol(post); Hmax <- log(K)
+  mean(apply(post, 1, entropy) / Hmax)
+}
+sharpness <- function(post) mean(apply(post, 1, max))  # closer to 1 is better
+
+qual_cmp <- tibble(
+  wave   = c("W3","W13","W3","W13"),
+  covars = c("no","no","yes","yes"),
+  norm_entropy = c(norm_entropy(m_w3_nocov$posterior),
+                   norm_entropy(m_w13_nocov$posterior),
+                   norm_entropy(m_w3_cov$posterior),
+                   norm_entropy(m_w13_cov$posterior)),
+  max_p_mean   = c(sharpness(m_w3_nocov$posterior),
+                   sharpness(m_w13_nocov$posterior),
+                   sharpness(m_w3_cov$posterior),
+                   sharpness(m_w13_cov$posterior))
+)
+qual_cmp
+```
+
+We evaluated classification quality using normalized entropy (lower = better) and the mean maximum posterior probability (higher = better).
+
+For Wave 3, the no-covariate model showed clearer class separation than the covariate model (entropy: 0.215 vs 0.308; max posterior: 0.891 vs 0.851). This suggests that covariates introduced additional variability and slightly diluted classification certainty.
+In contrast, for Wave 13, adding covariates improved classification quality (entropy: 0.245 to 0.207; max posterior: 0.867 to 0.886), indicating that class membership in Wave 13 is more strongly structured by the covariates.
+
+**Do the proportions of respondents in each class differ between 1996 and 2016?**
+
+```{r}
+# match classes
+flatten_probs <- function(m){
+  mats <- lapply(m$probs, function(x) as.matrix(x)) 
+  P <- do.call(cbind, mats) 
+  rownames(P) <- paste0("c", seq_len(nrow(P)))
+  P
+}
+P_w3  <- flatten_probs(m_w3_nocov)
+P_w13 <- flatten_probs(m_w13_nocov)
+
+# Cosine similarity function
+cos_sim <- function(A, B){
+  A <- as.matrix(A); B <- as.matrix(B)
+  num <- A %*% t(B)
+  A_n <- sqrt(rowSums(A^2)); B_n <- sqrt(rowSums(B^2))
+  sweep(sweep(num, 1, A_n, "/"), 2, B_n, "/")
+}
+
+S <- cos_sim(P_w3, P_w13)   # [K x K] similarity matrix
+
+# Optional: clean up numerical weirdness
+S[is.na(S)] <- 0
+
+# 2) Convert similarity → nonnegative cost
+cost <- max(S) - S    
+
+# 3) Hungarian algorithm on cost
+assign <- clue::solve_LSAP(cost)
+
+matched_pairs <- tibble(
+  w3_class   = seq_len(nrow(S)),
+  w13_class  = as.integer(assign),
+  similarity = S[cbind(seq_len(nrow(S)), as.integer(assign))]
+)
+
+matched_pairs
+
+```
+
+To compare latent classes across waves, we aligned Wave 3 and Wave 13 classes based on cosine similarity of their item-response probability profiles.\
+
+High similarity indicates that the classes represent very similar underlying subpopulations.
+
+```{r}
+# W3 proportions (no cov)
+p_w3 <- tibble(
+  w3_class = seq_along(m_w3_nocov$P),
+  prop_w3  = as.numeric(m_w3_nocov$P)
+)
+
+# W13 proportions (no cov)
+p_w13 <- tibble(
+  w13_class = seq_along(m_w13_nocov$P),
+  prop_w13  = as.numeric(m_w13_nocov$P)
+)
+
+# Merge using your matched_pairs table
+prop_compare <- matched_pairs %>%
+  left_join(p_w3,  by = "w3_class") %>%
+  left_join(p_w13, by = "w13_class")
+
+prop_compare
+```
+
+**Which demographic covariates predict class membership, and do these associations differ across years?**
+
+```{r}
+coef_w3  <- m_w3_cov$coeff
+coef_w13 <- m_w13_cov$coeff
+coef_w3
+coef_w13
+```
